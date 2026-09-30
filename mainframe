@@ -1,0 +1,128 @@
+using UnityEngine;
+using UnityEngine.UI;
+
+public class GuitarTunerE4 : MonoBehaviour
+{
+    [Header]
+    public float targetFrequency = 329.63f;
+    public float tolerance = 1.0f;
+    public float volumeThreshold = 0.01f;
+
+    [Header("Ссылки  (Image)")]
+    public Image lowIndicator;
+    public Image highIndicator;
+    public Image okIndicator;
+
+    [Header("Цвета")]
+    public Color activeColor = Color.green;
+    public Color inactiveColor = new Color(1f, 1f, 1f, 0.2f);
+
+    [Header("Отладка")]
+    public string currentStatus = "—";
+    public float detectedFrequency = 0f;
+
+    private AudioClip microphoneClip;
+    private string microphoneDevice;
+    private const int SampleRate = 44100;
+    private const int ClipLengthSeconds = 1;
+
+    void Start()
+    {
+        if (Microphone.devices.Length == 0)
+        {
+            Debug.LogError("Устройство не найдено!");
+            return;
+        }
+
+        microphoneDevice = Microphone.devices[0];
+        microphoneClip = Microphone.Start(microphoneDevice, true, ClipLengthSeconds, SampleRate);
+
+        UpdateIndicators();
+    }
+
+    void Update()
+    {
+        if (microphoneClip == null) return;
+
+        int micPosition = Microphone.GetPosition(microphoneDevice);
+        if (micPosition < 1024) return;
+
+        float[] samples = new float[1024];
+        int startPosition = micPosition - 1024;
+        if (startPosition < 0) startPosition += microphoneClip.samples;
+        microphoneClip.GetData(samples, startPosition);
+
+        float volume = GetRMS(samples);
+        if (volume < volumeThreshold)
+        {
+            currentStatus = "—";
+            detectedFrequency = 0f;
+            UpdateIndicators();
+            return;
+        }
+
+        detectedFrequency = DetectPitch(samples, SampleRate);
+        if (detectedFrequency <= 0f)
+        {
+            currentStatus = "—";
+            UpdateIndicators();
+            return;
+        }
+
+        float diff = detectedFrequency - targetFrequency;
+        if (Mathf.Abs(diff) <= tolerance) currentStatus = "ok";
+        else if (diff < 0) currentStatus = "low";
+        else currentStatus = "high";
+
+        UpdateIndicators();
+    }
+
+    private float GetRMS(float[] samples)
+    {
+        float sum = 0f;
+        for (int i = 0; i < samples.Length; i++) sum += samples[i] * samples[i];
+        return Mathf.Sqrt(sum / samples.Length);
+    }
+
+    private float DetectPitch(float[] samples, int sampleRate)
+    {
+        int minLag = sampleRate / 1000;
+        int maxLag = sampleRate / 50;
+        float bestCorrelation = 0f;
+        int bestLag = -1;
+
+        for (int lag = minLag; lag < maxLag; lag++)
+        {
+            float correlation = 0f;
+            for (int i = 0; i < samples.Length - lag; i++)
+                correlation += samples[i] * samples[i + lag];
+
+            if (correlation > bestCorrelation)
+            {
+                bestCorrelation = correlation;
+                bestLag = lag;
+            }
+        }
+
+        if (bestLag <= 0) return 0f;
+        return (float)sampleRate / bestLag;
+    }
+
+    private void UpdateIndicators()
+    {
+        if (lowIndicator != null)
+            lowIndicator.color = (currentStatus == "low") ? activeColor : inactiveColor;
+
+        if (highIndicator != null)
+            highIndicator.color = (currentStatus == "high") ? activeColor : inactiveColor;
+
+        if (okIndicator != null)
+            okIndicator.color = (currentStatus == "ok") ? activeColor : inactiveColor;
+    }
+
+    void OnDestroy()
+    {
+        if (Microphone.IsRecording(microphoneDevice))
+            Microphone.End(microphoneDevice);
+    }
+}
