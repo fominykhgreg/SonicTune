@@ -1,0 +1,16 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class LoadSceneButton : MonoBehaviour
+{
+    [Tooltip("Имя сцены, на которую нужно перейти")]
+    public string sceneName = "Scene1";
+
+    /// <summary>
+    /// Вызывается из OnClick() кнопки в инспекторе
+    /// </summary>
+    public void LoadScene()
+    {
+        SceneManager.LoadScene(sceneName);
+    }
+}
