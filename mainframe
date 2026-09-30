@@ -3,19 +3,34 @@ using UnityEngine.UI;
 
 public class GuitarTunerE4 : MonoBehaviour
 {
-    [Header]
+    [Header("Настройки ")]
     public float targetFrequency = 329.63f;
     public float tolerance = 1.0f;
     public float volumeThreshold = 0.01f;
 
-    [Header("Ссылки  (Image)")]
-    public Image lowIndicator;
-    public Image highIndicator;
-    public Image okIndicator;
+  
+
+    [Header("Ссылки  (SpriteRenderer)")]
+    public SpriteRenderer lowIndicator;
+    public SpriteRenderer highIndicator;
+    public SpriteRenderer okIndicator;
 
     [Header("Цвета")]
     public Color activeColor = Color.green;
     public Color inactiveColor = new Color(1f, 1f, 1f, 0.2f);
+
+    public Color activeColor2 = Color.green;
+    public Color inactiveColor2 = new Color(1f, 1f, 1f, 0.2f);
+
+    public Color activeColor3 = Color.green;
+    public Color inactiveColor3 = new Color(1f, 1f, 1f, 0.2f);
+
+    [Header("Плавность и удержание")]
+    [Tooltip("Скорость плавного перехода цвета")]
+    public float colorLerpSpeed = 5f;
+
+    [Tooltip("Сколько секунд держать цвет после исчезновения")]
+    public float holdDuration = 1.0f;
 
     [Header("Отладка")]
     public string currentStatus = "—";
@@ -25,6 +40,11 @@ public class GuitarTunerE4 : MonoBehaviour
     private string microphoneDevice;
     private const int SampleRate = 44100;
     private const int ClipLengthSeconds = 1;
+
+    // Таймер удержания для каждого 
+    private float lowHoldTimer = 0f;
+    private float highHoldTimer = 0f;
+    private float okHoldTimer = 0f;
 
     void Start()
     {
@@ -37,44 +57,64 @@ public class GuitarTunerE4 : MonoBehaviour
         microphoneDevice = Microphone.devices[0];
         microphoneClip = Microphone.Start(microphoneDevice, true, ClipLengthSeconds, SampleRate);
 
-        UpdateIndicators();
+        // Сразу ставим неактивный цвет
+        if (lowIndicator != null) lowIndicator.color = inactiveColor;
+        if (highIndicator != null) highIndicator.color = inactiveColor;
+        if (okIndicator != null) okIndicator.color = inactiveColor;
     }
 
     void Update()
     {
-        if (microphoneClip == null) return;
-
-        int micPosition = Microphone.GetPosition(microphoneDevice);
-        if (micPosition < 1024) return;
-
-        float[] samples = new float[1024];
-        int startPosition = micPosition - 1024;
-        if (startPosition < 0) startPosition += microphoneClip.samples;
-        microphoneClip.GetData(samples, startPosition);
-
-        float volume = GetRMS(samples);
-        if (volume < volumeThreshold)
+        // 1. Анализ  (только если есть данные)
+        if (microphoneClip != null)
         {
-            currentStatus = "—";
-            detectedFrequency = 0f;
-            UpdateIndicators();
-            return;
+            int micPosition = Microphone.GetPosition(microphoneDevice);
+            if (micPosition >= 1024)
+            {
+                float[] samples = new float[1024];
+                int startPosition = micPosition - 1024;
+                if (startPosition < 0) startPosition += microphoneClip.samples;
+                microphoneClip.GetData(samples, startPosition);
+
+                float volume = GetRMS(samples);
+                if (volume >= volumeThreshold)
+                {
+                    detectedFrequency = DetectPitch(samples, SampleRate);
+
+                    if (detectedFrequency > 0f)
+                    {
+                        float diff = detectedFrequency - targetFrequency;
+                        if (Mathf.Abs(diff) <= tolerance) currentStatus = "ok";
+                        else if (diff < 0) currentStatus = "low";
+                        else currentStatus = "high";
+
+                        // Сбрасываем таймер 
+                        ResetHoldTimer(currentStatus);
+                    }
+                }
+            }
         }
 
-        detectedFrequency = DetectPitch(samples, SampleRate);
-        if (detectedFrequency <= 0f)
+        // 2. Уменьшаем таймеры удержания
+        if (lowHoldTimer > 0f) lowHoldTimer -= Time.deltaTime;
+        if (highHoldTimer > 0f) highHoldTimer -= Time.deltaTime;
+        if (okHoldTimer > 0f) okHoldTimer -= Time.deltaTime;
+
+        // 3. Плавно обновляем цвета
+        UpdateIndicatorsSmooth();
+    }
+
+    /// <summary>
+    /// Сбрасывает таймер удержания для нужного на holdDuration секунд
+    /// </summary>
+    private void ResetHoldTimer(string status)
+    {
+        switch (status)
         {
-            currentStatus = "—";
-            UpdateIndicators();
-            return;
+            case "low": lowHoldTimer = holdDuration; break;
+            case "high": highHoldTimer = holdDuration; break;
+            case "ok": okHoldTimer = holdDuration; break;
         }
-
-        float diff = detectedFrequency - targetFrequency;
-        if (Mathf.Abs(diff) <= tolerance) currentStatus = "ok";
-        else if (diff < 0) currentStatus = "low";
-        else currentStatus = "high";
-
-        UpdateIndicators();
     }
 
     private float GetRMS(float[] samples)
@@ -108,16 +148,31 @@ public class GuitarTunerE4 : MonoBehaviour
         return (float)sampleRate / bestLag;
     }
 
-    private void UpdateIndicators()
+    /// <summary>
+    /// Плавно меняет цвет 
+    /// Активный цвет держится holdDuration секунд после исчезновения звука.
+    /// </summary>
+    private void UpdateIndicatorsSmooth()
     {
+        float t = Time.deltaTime * colorLerpSpeed;
+
         if (lowIndicator != null)
-            lowIndicator.color = (currentStatus == "low") ? activeColor : inactiveColor;
+        {
+            Color target = (lowHoldTimer > 0f) ? activeColor : inactiveColor;
+            lowIndicator.color = Color.Lerp(lowIndicator.color, target, t);
+        }
 
         if (highIndicator != null)
-            highIndicator.color = (currentStatus == "high") ? activeColor : inactiveColor;
+        {
+            Color target = (highHoldTimer > 0f) ? activeColor2 : inactiveColor2;
+            highIndicator.color = Color.Lerp(highIndicator.color, target, t);
+        }
 
         if (okIndicator != null)
-            okIndicator.color = (currentStatus == "ok") ? activeColor : inactiveColor;
+        {
+            Color target = (okHoldTimer > 0f) ? activeColor3 : inactiveColor3;
+            okIndicator.color = Color.Lerp(okIndicator.color, target, t);
+        }
     }
 
     void OnDestroy()
